@@ -1,2 +1,0 @@
-is equal true
-10.175

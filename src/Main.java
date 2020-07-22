@@ -44,23 +44,16 @@ class DBG
 		return merList;
 	}
 
-	void debug (String msg)
-	{
-		if (debugMode == 1)
-			System.out.println (Thread.currentThread ().getName () + "--->" + msg);
-	}
-
 	final ConcurrentHashMap<String, Node> N = new ConcurrentHashMap<> (); //map mer to Node
 	final ConcurrentHashMap<String, Read> R = new ConcurrentHashMap<> (); //map read to Read
 	final ConcurrentHashMap<String, ConcurrentHashMap<String, Integer>> F = new ConcurrentHashMap<> (); //multi-map from Node's mer to Forward Nodes' mer
 	final ConcurrentHashMap<String, ArrayList<String>> B = new ConcurrentHashMap<> (); //multi-map from Node's mer to Backward Nodes' mer
 	final ConcurrentHashMap<String, ArrayList<String>> O = new ConcurrentHashMap<> (); //multi-map from Node's mer to Original Reads' read
-	final int k, debugMode;
+	int k;
 
-	public DBG (int k, int debugMode)
+	public DBG (int k)
 	{
 		this.k = k;
-		this.debugMode = debugMode;
 	}
 
 	void createNode (String[] readList)
@@ -70,8 +63,6 @@ class DBG
 			if (R.putIfAbsent (read, new Read (read)) != null)
 				continue;
 			//对相同的read只有一个线程能下来
-			debug ("---------");
-			debug ("read is " + read);
 			for (String mer : chop (read, k)) //分成k-mer
 			{
 				String LMer = mer.substring (0, mer.length () - 1);
@@ -99,27 +90,7 @@ class DBG
 
 	boolean addRead (String mer, String read, boolean atMerge)
 	{
-		if (O.putIfAbsent (mer, new ArrayList<> (Collections.singleton (read))) == null)
-		{
-			debug (mer + " add " + read + " as first read");
-			// 如果被删了，只要不++ref就行了，read肯定会被其他线程替换的
-			try
-			{
-				synchronized (R.get (read))
-				{
-					++R.get (read).ref;
-					if (atMerge)
-						++R.get (read).locked;
-					debug (read + " ref is " + R.get (read).ref + ", locked is " + R.get (read).locked);
-				}
-			}
-			catch (Exception e)
-			{
-				debug (" skip whole " + read + " deleted in other Thread");
-				return true;
-			}
-		}
-		else
+		if (O.putIfAbsent (mer, new ArrayList<> (Collections.singleton (read))) != null)
 		{
 			ArrayList<Integer> DList = new ArrayList<> ();
 			synchronized (O.get (mer))
@@ -130,18 +101,12 @@ class DBG
 					if (read.length () < tempString.length ()) //当前read被已有的read包含，直接跳过整个read
 					{
 						if (tempString.contains (read))
-						{
-							debug ("skip whole " + read + " has " + tempString);
 							return true;
-						}
 					}
 					else if (read.length () == tempString.length ()) //下一个LMer与上一个RMer重复
 					{
 						if (read.equals (tempString))
-						{
-							debug (mer + " skip has same " + read);
 							return false;
-						}
 					}
 					else if (read.contains (tempString)) //当前read包含已有的read，清理掉
 						DList.add (RIndex);
@@ -150,28 +115,24 @@ class DBG
 				{
 					int DIndex = DList.get (i);
 					String DRead = O.get (mer).get (DIndex);
-					debug (mer + " del " + DRead + " use " + read);
 					cleanRead (DRead, atMerge);
 					O.get (mer).remove (DIndex);
 				}
 				O.get (mer).add (read);
 			} //synchronized (O.get (mer))
-			try
+		}
+		try
+		{
+			synchronized (R.get (read))
 			{
-				synchronized (R.get (read))
-				{
-					++R.get (read).ref;
-					if (atMerge)
-						++R.get (read).locked;
-					debug (read + " ref is " + R.get (read).ref + ", locked is " + R.get (read).locked);
-				}
+				++R.get (read).ref;
+				if (atMerge)
+					++R.get (read).locked;
 			}
-			catch (Exception e)
-			{
-				debug (" skip whole " + read + " deleted in other Thread");
-				return true;
-			}
-			debug (mer + " add " + read + " as read");
+		}
+		catch (Exception e)
+		{
+			return true;
 		}
 		return false;
 	}
@@ -186,14 +147,12 @@ class DBG
 				--read.ref;
 				if (atMerge)
 					--read.locked;
-				debug (string + " ref is " + read.ref + ", locked is " + read.locked);
 				if (read.ref == 0)
 					R.remove (string);
 			}
 		}
-		catch (Exception e)
+		catch (Exception ignored)
 		{
-			debug ("read " + string + " deleted in other Thread");
 		}
 	}
 
@@ -206,31 +165,17 @@ class DBG
 			synchronized (R.get (string))
 			{
 				Read read = R.get (string);
-				debug (string + " ref is " + read.ref + ", locked is " + read.locked);
 				if (read.ref == 0)
 					R.remove (string);
 			}
 		}
-		catch (Exception e)
+		catch (Exception ignored)
 		{
-			debug ("read " + string + " deleted in other Thread");
 		}
 	}
 
 	void addEdge (String LMer, String RMer)
 	{
-//		F.putIfAbsent (LMer, new ConcurrentHashMap<> ());
-//		if (F.get (LMer).putIfAbsent (RMer, 1) != null)
-//			synchronized (F.get (LMer))
-//			{
-//				F.get (LMer).replace (RMer, F.get (LMer).get (RMer) + 1);
-//			}
-//		B.putIfAbsent (RMer, new ArrayList<> ());
-//		synchronized (B.get (RMer))
-//		{
-//			if (!B.get (RMer).contains (LMer))
-//				B.get (RMer).add (LMer);
-//		}
 		synchronized (F)
 		{
 			F.putIfAbsent (LMer, new ConcurrentHashMap<> ());
@@ -263,82 +208,6 @@ class DBG
 		B.get (FMer).remove (RMer);
 	}
 
-
-//	void mergeNode (Node LNode, Node RNode)
-//	{
-//		//拼接LR的字符串
-//		String LMer = LNode.mer, RMer = RNode.mer, newMer = LMer + RMer.substring (k - 2);
-//		Node newNode = new Node (newMer); //新的Node
-//		N.put (newMer, newNode);
-//		newNode.inD = LNode.inD;
-//		newNode.outD = RNode.outD;
-//		if (B.containsKey (LMer)) //连接L的父节点
-//		{
-//			for (String BMer : B.get (LMer))
-//			{
-//				addEdge (BMer, newMer);
-//				F.get (BMer).replace (newMer, F.get (BMer).get (LMer)); //复制边的权值
-//				F.get (BMer).remove (LMer); //del ?-->L
-//			}
-//			B.remove (LMer); //del ?<--L
-//		}
-//		if (F.containsKey (RMer)) //连接R的子节点
-//		{
-//			for (String FMer : F.get (RMer).keySet ())
-//			{
-//				addEdge (newMer, FMer);
-//				F.get (newMer).replace (FMer, F.get (RMer).get (FMer)); //复制边的权值
-//				B.get (FMer).remove (RMer); //del R<--?
-//			}
-//			F.remove (RMer); //del R-->?
-//		}
-//		F.remove (LMer); //del L-->R
-//		B.remove (RMer); //del L<--R
-//		//更新并连上L的read
-//		for (int LIndex = 0; LIndex < O.get (LMer).size (); ++LIndex)
-//		{
-//			String LRead = O.get (LMer).get (LIndex);
-//			String newRead = ""; //到L后没有到R的都扩展到R，到L再绕圈后没有到R的也扩展
-//			if (LRead.lastIndexOf (LMer) > LRead.indexOf (RMer))
-//			{
-//				int tempIndex = LRead.lastIndexOf (LMer);
-//				newRead = LRead.substring (0, tempIndex) + newMer;
-//				updateRead (LMer, newRead, LIndex);
-//			}
-//			addRead (newMer, O.get (LMer).get (LIndex));
-//			cleanRead (LRead);
-//			tryCleanRead (newRead);
-//		}
-//		O.remove (LMer);
-//		//更新并连上R的read
-//		for (int RIndex = 0; RIndex < O.get (RMer).size (); ++RIndex)
-//		{
-//			String RRead = O.get (RMer).get (RIndex);
-//			String newRead = ""; //没有从L到R的都扩展到L
-//			if (!RRead.contains (LMer) || RRead.indexOf (RMer) < RRead.indexOf (LMer))
-//			{
-//				int tempIndex = RRead.indexOf (RMer) + RMer.length ();
-//				newRead = newMer + RRead.substring (tempIndex);
-//				updateRead (RMer, newRead, RIndex);
-//			}
-//			addRead (newMer, O.get (RMer).get (RIndex));
-//			cleanRead (RRead);
-//			tryCleanRead (newRead);
-//		}
-//		O.remove (RMer);
-//		N.remove (LMer);
-//		N.remove (RMer);
-//	}
-//
-//	void updateRead (String mer, String newRead, int index)
-//	{
-//		debug (O.get (mer).get (index) + " update to");
-//		if (!R.containsKey (newRead))
-//			R.put (newRead, new Read (newRead));
-//		O.get (mer).set (index, newRead);
-//		debug (O.get (mer).get (index));
-//	}
-
 	void mergeNode (Node LNode, Node RNode)
 	{
 		//拼接LR的字符串
@@ -348,7 +217,6 @@ class DBG
 		newNode.inD = LNode.inD;
 		newNode.outD = RNode.outD;
 		N.put (newMer, newNode);
-
 		synchronized (F)
 		{
 			synchronized (B)
@@ -407,261 +275,260 @@ class DBG
 		O.remove (RMer);
 		N.remove (LMer);
 		N.remove (RMer);
-
 		synchronized (R)
 		{
 			for (String read : O.get (newMer))
-			{
-				debug ("unlock " + read);
 				--R.get (read).locked;
-			}
 		}
 	}
 }
 
 public class Main
 {
-	public static void debug (String msg)
+	static void print (String msg)
 	{
-		if (debugMode == 1)
-			System.out.println (Thread.currentThread ().getName () + "--->" + msg);
+		System.out.println (msg);
 	}
 
-	public static void print (String msg)
+	static void DFS (DBG graph, String in, ArrayList<String> list)
 	{
-		System.out.println (Thread.currentThread ().getName () + "--->" + msg);
+		if (graph.F.get (in) != null)
+			for (String out : graph.F.get (in).keySet ())
+			{
+				graph.B.get (out).remove (in);
+				graph.F.get (in).remove (out);
+				DFS (graph, out, list);
+			}
+		list.add (in);
 	}
-
-	public static String genString (int size)
-	{
-		String s = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-		Random random = new Random ();
-		random.setSeed (System.currentTimeMillis ());
-		StringBuilder builder = new StringBuilder ();
-		for (int i = 0; i < size; ++i)
-			builder.append (s.charAt (random.nextInt (26)));
-		return builder.toString ();
-	}
-
-	public static int debugMode = 0;
 
 	public static void main (String[] args)
-	{// TODO size
-		long startTime = System.currentTimeMillis ();
-		int Size = (int) Math.pow (10, 4),
-				Times = 2 * (int) Math.pow (10, 5),
-				BatchSize = (int) Math.pow (10, 4),
-				LengthDown = 60,
-				LengthUp = 100,
-				K = 31;
-//		int Size = 10,
-//				Times = 30,
-//				BatchSize = 10,
-//				LengthDown = 6,
-//				LengthUp = 8,
-//				K = 5;
-		String origin = genString (Size);
-//		String origin = "ABCDEFGHIJ";
-//		String origin = "ABCDBCEF";
-		Random random = new Random ();
-		random.setSeed (startTime);
-		int BatchCount = Times / BatchSize;
+	{
+		int BatchSize = (int) Math.pow (10, 4), K = 31;
+		DBG graph = new DBG (K);
 
-		DBG graph = new DBG (K, debugMode);
-
-		int threadCount = Math.min (Runtime.getRuntime ().availableProcessors () - 1, BatchCount);
+		ArrayList<String> origin = new ArrayList<> ();
 		ArrayList<Future<Integer>> futures = new ArrayList<> ();
-		ExecutorService executor = Executors.newFixedThreadPool (threadCount);
-		CountDownLatch count = new CountDownLatch (BatchCount);
-		for (int i = 0; i < BatchCount; ++i)
-		{
-			int finalI = i;
-			executor.submit (() ->
-			{
-				print ("start batch " + (finalI + 1) + " of " + BatchCount);
-				ArrayList<String> readList = new ArrayList<> ();
-				for (int j = 0; j < BatchSize; ++j)
-				{
-					int startIndex = random.nextInt (Size - LengthDown + 1);
-					int endIndex = Math.min (Size, LengthDown + random.nextInt
-							(LengthUp - LengthDown + 1) + startIndex);
-					readList.add (origin.substring (startIndex, endIndex));
-				}
-				String[] reads = new String[readList.size ()];
-				readList.toArray (reads);
-				graph.createNode (reads);
-				readList.clear ();
-				System.gc ();
-				print ("finish batch " + (finalI + 1) + " of " + BatchCount);
-				count.countDown ();
-			});
-		}
+		ExecutorService executor = Executors.newFixedThreadPool (Runtime.getRuntime ().availableProcessors ());
 		try
 		{
-			count.await ();
+			BufferedReader reader = new BufferedReader (new FileReader ("sequence.txt"));
+			String read;
+			int batch = 1;
+			while ((read = reader.readLine ()) != null)
+			{
+				origin.add (read);
+				if (origin.size () == BatchSize)
+				{
+					int finalBatch = batch++;
+					String[] reads = new String[origin.size ()];
+					origin.toArray (reads);
+					origin.clear ();
+					System.gc ();
+					futures.add (executor.submit (() ->
+					{
+						print ("start batch " + finalBatch);
+						graph.createNode (reads);
+						print ("finish batch " + finalBatch);
+						return 1;
+					}));
+				}
+			}
+			if (origin.size () != 0)
+			{
+				int finalBatch = batch;
+				String[] reads = new String[origin.size ()];
+				origin.toArray (reads);
+				origin.clear ();
+				System.gc ();
+				futures.add (executor.submit (() ->
+				{
+					print ("start batch " + finalBatch);
+					graph.createNode (reads);
+					print ("finish batch " + finalBatch);
+					return 1;
+				}));
+			}
+			for (int i = futures.size () - 1; i > 0; --i)
+			{
+				futures.get (i).get ();
+				futures.remove (i);
+			}
 		}
-		catch (InterruptedException e)
+		catch (IOException | ExecutionException | InterruptedException e)
 		{
 			e.printStackTrace ();
 		}
 		print ("|forward| = " + graph.F.size ());
 		print ("|nodes| = " + graph.N.size ());
 		print ("|reads| = " + graph.R.size ());
-		long midTime = System.currentTimeMillis ();
-		print ("createNode cost is " + (double) (midTime - startTime) / 1000);
 
-		int Round = 1;
-		boolean flag = true;
-		while (flag)
+		int round, buildTimes = 0;
+		boolean flag, start = true;
+		while (graph.N.size () != 1 && buildTimes < 10)
 		{
-			print ("in round " + Round++);
-			print ("|forward| = " + graph.F.size ());
-			print ("|nodes| = " + graph.N.size ());
-			print ("|reads| = " + graph.R.size ());
-
-			flag = false;
-//			if (graph.F.size () < 10)
-//				debugMode = 1;
-			for (String LMer : graph.F.keySet ())
+			++buildTimes;
+			//尽人事处理一下环
+			if (!start)
 			{
-				debug ("visit " + LMer);
-				DBG.Node LNode = graph.N.get (LMer);
-				if (LNode == null || LNode.locked)
+				int minMerSize = (int) Math.pow (10, 10), minReadSize = minMerSize;
+				String[] allMer = graph.N.keySet ().toArray (new String[0]);
+				for (String mer : allMer)
+					if (mer.length () < minMerSize)
+						minMerSize = mer.length ();
+				String[] allRead = graph.R.keySet ().toArray (new String[0]);
+				for (String read : allRead)
+					if (read.length () < minReadSize)
+						minReadSize = read.length ();
+				if (minMerSize > minReadSize - 3)
+					break;
+				int newK = Math.min (minMerSize * 3 / 2, minReadSize - 3);
+				if (newK % 2 == 0)
+					++newK;
+				if (newK <= graph.k)
+					break;
+				graph.k = newK;
+				print ("update k to " + graph.k);
+				graph.N.clear ();
+				graph.R.clear ();
+				graph.F.clear ();
+				graph.B.clear ();
+				graph.O.clear ();
+				graph.createNode (allRead);
+				System.gc ();
+			}
+
+			flag = true;
+			round = 0;
+			while (flag)
+			{
+				++round;
+				if (start)
 				{
-					debug (LMer + " is deleted or locked in other thread");
-					continue;
+					print ("in build " + buildTimes);
+					print ("in round " + round);
+					print ("|forward| = " + graph.F.size ());
+					print ("|nodes| = " + graph.N.size ());
+					print ("|reads| = " + graph.R.size ());
+				}
+				else if (round % 50 == 0)
+				{
+					print ("in build " + buildTimes);
+					print ("in round " + round);
+					print ("|forward| = " + graph.F.size ());
+					print ("|nodes| = " + graph.N.size ());
+					print ("|reads| = " + graph.R.size ());
 				}
 
-				synchronized (graph.R)
+				flag = false;
+				for (String LMer : graph.F.keySet ())
 				{
-					boolean skipMer = false;
-					for (String read : graph.O.get (LMer))
-						if (graph.R.get (read).locked > 0)
-						{
-							debug ("LRead " + read + " is locked");
-							skipMer = true;
-							flag = true;
-							break;
-						}
-					if (skipMer)
+					DBG.Node LNode = graph.N.get (LMer);
+					if (LNode == null || LNode.locked)
 						continue;
-				}
-
-				debug ("try to merge " + LMer);
-				if (graph.F.get (LMer).size () == 1) //L只有一个出口
-					for (String RMer : graph.F.get (LMer).keySet ())
+					synchronized (graph.R)
 					{
-						DBG.Node RNode = graph.N.get (RMer);
-						// 其实肯定不null，也不会locked
-						if (RNode != null && !LMer.equals (RMer) &&
-								graph.B.get (RMer).size () == 1)//R只有一个入口，非环
-						{
-							flag = true;
-							if (RNode.locked)
-								continue;
-
-							synchronized (graph.R)
+						boolean skipMer = false;
+						for (String read : graph.O.get (LMer))
+							if (graph.R.get (read).locked > 0)
 							{
-								// 不需要，肯定不会有lock的，有lock的话上面就已经发现lock了
-								// 也不会上面没有lock到这之前lock了，因为只有主线程会lock
-								boolean skipMer = false;
-								for (String read : graph.O.get (RMer))
-									if (graph.R.get (read).locked > 0)
-									{
-										debug ("RRead " + read + " is locked");
-										skipMer = true;
-										break;
-									}
-								if (skipMer)
-									continue;
-								// 不需要
-
-								for (String read : graph.O.get (LMer))
-								{
-									debug ("lock " + read + " for " + LMer);
-									++graph.R.get (read).locked;
-								}
-								debug ("merge " + LMer + " with " + RMer);
-								for (String read : graph.O.get (RMer))
-								{
-									debug ("lock " + read + " for " + RMer);
-									++graph.R.get (read).locked;
-								}
+								skipMer = true;
+								flag = true;
+								break;
 							}
-							LNode.locked = RNode.locked = true;
-							futures.add (executor.submit (() ->
-							{
-								String newMer = LMer + RMer.substring (graph.k - 2);
-								debug ("merge " + LMer + " + " + RMer + " = " + newMer);
-								graph.mergeNode (LNode, RNode);
-								graph.N.get (newMer).locked = false;
-								return 1;
-							}));
-						}
+						if (skipMer)
+							continue;
 					}
-			}
 
-			try
-			{
-				for (int i = futures.size () - 1; i > 0; --i)
-				{
-					futures.get (i).get ();
-					futures.remove (i);
+					if (graph.F.get (LMer).size () == 1) //L只有一个出口
+						for (String RMer : graph.F.get (LMer).keySet ())
+						{
+							DBG.Node RNode = graph.N.get (RMer);
+							if (RNode != null && !LMer.equals (RMer) && graph.B.get (RMer) != null
+									&& graph.B.get (RMer).size () == 1) //R只有一个入口，非环
+							{
+								flag = true;
+								if (RNode.locked)
+									continue;
+								synchronized (graph.R)
+								{
+									boolean skipMer = false;
+									for (String read : graph.O.get (RMer))
+										if (graph.R.get (read).locked > 0)
+										{
+											skipMer = true;
+											break;
+										}
+									if (skipMer)
+										continue;
+
+									for (String read : graph.O.get (LMer))
+										++graph.R.get (read).locked;
+									for (String read : graph.O.get (RMer))
+										++graph.R.get (read).locked;
+								}
+								LNode.locked = RNode.locked = true;
+								futures.add (executor.submit (() ->
+								{
+									String newMer = LMer + RMer.substring (graph.k - 2);
+									graph.mergeNode (LNode, RNode);
+									graph.N.get (newMer).locked = false;
+									return 1;
+								}));
+							}
+						}
 				}
+				try
+				{
+					for (int i = futures.size () - 1; i > 0; --i)
+					{
+						futures.get (i).get ();
+						futures.remove (i);
+					}
+				}
+				catch (InterruptedException | ExecutionException e)
+				{
+					e.printStackTrace ();
+				}
+				System.gc ();
 			}
-			catch (InterruptedException | ExecutionException e)
-			{
-				e.printStackTrace ();
-			}
-			System.gc ();
-			long roundTime = System.currentTimeMillis ();
-			print ("round cost is " + (double) (roundTime - midTime) / 1000);
-			midTime = roundTime;
+			start = false;
 		}
-
 		executor.shutdown ();
-		debugMode = 0;
-		//TODO 处理环
+
+		print ("|forward| = " + graph.F.size ());
+		print ("|nodes| = " + graph.N.size ());
+		print ("|reads| = " + graph.R.size ());
+
+		//找个入口
+		String startMer = "";
+		for (DBG.Node node : graph.N.values ())
+			if (node.inD < node.outD)
+			{
+				startMer = node.mer;
+				break;
+			}
+		//死循环，随便找个
+		if (startMer.equals (""))
+			startMer = graph.N.keys ().nextElement ();
+		//走一遍DFS
+		ArrayList<String> finalMerList = new ArrayList<> ();
+		DFS (graph, startMer, finalMerList);
+
+		//倒序拼接
+		int j = finalMerList.size ();
+		StringBuilder builderMer = new StringBuilder ();
+		builderMer.append (finalMerList.get (j - 1));
+		for (int i = 1; i < j; ++i)
+			builderMer.append (finalMerList.get (j - 1 - i).substring (graph.k - 2));
+
+		String finalMer = builderMer.toString ();
 		try
 		{
-			BufferedWriter writer = new BufferedWriter (new FileWriter ("log.txt"));
-			print ("-------node-------");
-			for (String mer : graph.N.keySet ())
-			{
-				print ("--------------");
-				print ("is equal " + mer.equals (origin));
-				writer.write ("is equal " + mer.equals (origin));
-				writer.newLine ();
-				debug (graph.N.get (mer).inD + " inD");
-				debug (graph.N.get (mer).outD + " outD");
-				debug (mer);
-				debug ("-------forward-------");
-				if (graph.F.containsKey (mer))
-					for (String FMer : graph.F.get (mer).keySet ())
-					{
-						debug ("--" + graph.F.get (mer).get (FMer) + "-->");
-						debug (FMer);
-					}
-				debug ("-------backward-------");
-				if (graph.B.containsKey (mer))
-					for (String BMer : graph.B.get (mer))
-						debug (BMer);
-				debug ("-------read-------");
-				for (String read : graph.O.get (mer))
-					debug (read);
-			}
-			debug ("-------all read-------");
-			for (DBG.Read read : graph.R.values ())
-			{
-				debug ("--------------");
-				debug (read.string);
-				debug ("" + read.ref);
-			}
-			long endTime = System.currentTimeMillis ();
-			print ("total cost is " + (double) (endTime - startTime) / 1000);
-			writer.write ("" + (double) (endTime - startTime) / 1000);
-			writer.newLine ();
+			BufferedWriter writer = new BufferedWriter (new FileWriter ("result.txt"));
+			writer.write (finalMer);
 			writer.close ();
+			print ("write in result.txt");
 		}
 		catch (IOException e)
 		{

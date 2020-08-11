@@ -35,15 +35,6 @@ class DBG
 		}
 	}
 
-	static String[] chop (String read, int k)
-	{
-		int size = read.length () - k + 1;
-		String[] merList = new String[size];
-		for (int i = 0; i < size; ++i)
-			merList[i] = read.substring (i, i + k);
-		return merList;
-	}
-
 	final ConcurrentHashMap<String, Node> N = new ConcurrentHashMap<> (); //map mer to Node
 	final ConcurrentHashMap<String, Read> R = new ConcurrentHashMap<> (); //map read to Read
 	final ConcurrentHashMap<String, ConcurrentHashMap<String, Integer>> F = new ConcurrentHashMap<> (); //multi-map from Node's mer to Forward Nodes' mer
@@ -60,13 +51,12 @@ class DBG
 	{
 		for (String read : readList)
 		{
-			if (R.putIfAbsent (read, new Read (read)) != null)
-				continue;
-			//对相同的read只有一个线程能下来
-			for (String mer : chop (read, k)) //分成k-mer
+			String mer, LMer, RMer;
+			for (int i = 0; i < read.length () - k + 1; i++)
 			{
-				String LMer = mer.substring (0, mer.length () - 1);
-				String RMer = mer.substring (1);
+				mer = read.substring (i, i + k);
+				LMer = mer.substring (0, mer.length () - 1);
+				RMer = mer.substring (1);
 				N.putIfAbsent (LMer, new Node (LMer));
 				if (addRead (LMer, read, false)) //没有用到这个read
 				{
@@ -304,12 +294,14 @@ public class Main
 
 	public static void main (String[] args)
 	{
-		int BatchSize = (int) Math.pow (10, 4), K = 31;
+		long startTime = System.currentTimeMillis ();
+		int BatchSize = (int) Math.pow (10, 5), K = 31;
 		DBG graph = new DBG (K);
 
+		int threadCount = Runtime.getRuntime ().availableProcessors ();
 		ArrayList<String> origin = new ArrayList<> ();
 		ArrayList<Future<Integer>> futures = new ArrayList<> ();
-		ExecutorService executor = Executors.newFixedThreadPool (Runtime.getRuntime ().availableProcessors ());
+		ExecutorService executor = Executors.newFixedThreadPool (threadCount);
 		try
 		{
 			BufferedReader reader = new BufferedReader (new FileReader ("sequence.txt"));
@@ -317,6 +309,8 @@ public class Main
 			int batch = 1;
 			while ((read = reader.readLine ()) != null)
 			{
+				if (graph.R.putIfAbsent (read, new DBG.Read (read)) != null)
+					continue;
 				origin.add (read);
 				if (origin.size () == BatchSize)
 				{
@@ -324,10 +318,15 @@ public class Main
 					String[] reads = new String[origin.size ()];
 					origin.toArray (reads);
 					origin.clear ();
-					System.gc ();
+					if (finalBatch % (10 * threadCount + 1) == 0)
+						for (int i = futures.size () - 1; i >= 0; --i)
+						{
+							futures.get (i).get ();
+							futures.remove (i);
+						}
+					print ("submit batch " + finalBatch);
 					futures.add (executor.submit (() ->
 					{
-						print ("start batch " + finalBatch);
 						graph.createNode (reads);
 						print ("finish batch " + finalBatch);
 						return 1;
@@ -340,16 +339,15 @@ public class Main
 				String[] reads = new String[origin.size ()];
 				origin.toArray (reads);
 				origin.clear ();
-				System.gc ();
+				print ("submit batch " + finalBatch);
 				futures.add (executor.submit (() ->
 				{
-					print ("start batch " + finalBatch);
 					graph.createNode (reads);
 					print ("finish batch " + finalBatch);
 					return 1;
 				}));
 			}
-			for (int i = futures.size () - 1; i > 0; --i)
+			for (int i = futures.size () - 1; i >= 0; --i)
 			{
 				futures.get (i).get ();
 				futures.remove (i);
@@ -371,15 +369,23 @@ public class Main
 			//尽人事处理一下环
 			if (!start)
 			{
+				graph.F.clear ();
+				graph.B.clear ();
+				graph.O.clear ();
 				int minMerSize = (int) Math.pow (10, 10), minReadSize = minMerSize;
 				String[] allMer = graph.N.keySet ().toArray (new String[0]);
+				graph.N.clear ();
 				for (String mer : allMer)
 					if (mer.length () < minMerSize)
 						minMerSize = mer.length ();
 				String[] allRead = graph.R.keySet ().toArray (new String[0]);
+				graph.R.clear ();
 				for (String read : allRead)
+				{
+					graph.R.putIfAbsent (read, new DBG.Read (read));
 					if (read.length () < minReadSize)
 						minReadSize = read.length ();
+				}
 				if (minMerSize > minReadSize - 3)
 					break;
 				int newK = Math.min (minMerSize * 3 / 2, minReadSize - 3);
@@ -389,13 +395,7 @@ public class Main
 					break;
 				graph.k = newK;
 				print ("update k to " + graph.k);
-				graph.N.clear ();
-				graph.R.clear ();
-				graph.F.clear ();
-				graph.B.clear ();
-				graph.O.clear ();
 				graph.createNode (allRead);
-				System.gc ();
 			}
 
 			flag = true;
@@ -490,7 +490,6 @@ public class Main
 				{
 					e.printStackTrace ();
 				}
-				System.gc ();
 			}
 			start = false;
 		}
@@ -534,5 +533,7 @@ public class Main
 		{
 			e.printStackTrace ();
 		}
+		long endTime = System.currentTimeMillis ();
+		print ("cost " + (endTime - startTime) / 1000 + "s");
 	}
 }

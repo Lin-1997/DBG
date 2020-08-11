@@ -9,15 +9,16 @@ public class util
 		Random random = new Random ();
 		random.setSeed (System.currentTimeMillis ());
 		StringBuilder builder = new StringBuilder ();
-		String repeat = "AAAAABBBBBCCCCCDDDDDEEEEEFFFFFGGGGGHHHHHIIIIIJJJJJKKKKK";
+		int repeatLength = 50, index;
 		for (int i = 0; i < Size; ++i)
 		{
-			builder.append (s.charAt (random.nextInt (26)));
-			if (i % 330 == 0)
+			if (i % 900 == 100)
 			{
-				builder.append (repeat);
-				i += repeat.length ();
+				index = random.nextInt (i - repeatLength + 1);
+				builder.append (builder.substring (index, index + repeatLength));
+				i += repeatLength;
 			}
+			builder.append (s.charAt (random.nextInt (26)));
 		}
 		String origin = builder.toString ();
 		BufferedWriter writer = new BufferedWriter (new FileWriter ("origin.txt"));
@@ -48,8 +49,8 @@ public class util
 
 	public static void main (String[] args) throws IOException
 	{
-		int Size = (int) Math.pow (10, 4),
-				Times = 6 * (int) Math.pow (10, 5),
+		int Size = (int) Math.pow (10, 5),
+				Times = 6 * (int) Math.pow (10, 6),
 				LengthDown = 60,
 				LengthUp = 100;
 

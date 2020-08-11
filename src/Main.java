@@ -333,6 +333,7 @@ public class Main
 					}));
 				}
 			}
+			reader.close ();
 			if (origin.size () != 0)
 			{
 				int finalBatch = batch;
